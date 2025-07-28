@@ -1,57 +1,11 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-from fpdf import FPDF
-from sklearn.linear_model import LinearRegression
-import numpy as np
-from collections import Counter
+productos = df["Producto"].unique()
+categorias = df["Categoria"].unique() if "Categoria" in df.columns else []
 
-st.set_page_config(page_title="Informe Cafetería", page_icon="☕", layout="wide")
+# Preparar pestañas
+tabs = st.tabs(["📌 KPIs", "📈 Gráficos", "🤖 Simulador IA", "💡 Recomendaciones", "📄 PDF"])
 
-# Estilo visual personalizado
-st.markdown("""
-<style>
-    .main {
-        background-color: #FAF8F2;
-    }
-    h1, h2, h3, h4 {
-        color: #0F8A84;
-    }
-    .stButton>button {
-        background-color: #0F8A84;
-        color: white;
-        border-radius: 8px;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Logo
-st.image("logo.png", width=150)
-
-# Título principal
-st.title("☕ Análisis Inteligente para Cafeterías")
-
-st.markdown("""
-Sube tu archivo de ventas mensual para analizar automáticamente el rendimiento de tu cafetería.
-
-La IA analizará:
-- KPIs clave y alertas
-- Recomendaciones personalizadas
-- Simulación de precios con IA local
-- Gráficos interactivos y PDF descargable
-""")
-
-uploaded_file = st.file_uploader("Sube tu archivo Excel con los datos de ventas:", type=["xlsx"])
-
-if uploaded_file:
-    df = pd.read_excel(uploaded_file)
-    df["Fecha"] = pd.to_datetime(df["Fecha"])
-    df["Fecha_Hora"] = df["Fecha"].astype(str) + " " + df["Hora"]
-
-    productos = df["Producto"].unique()
-    categorias = df["Categoria"].unique() if "Categoria" in df.columns else []
-
-    # Métricas
+with tabs[0]:
+    st.subheader("📌 Indicadores clave")
     total_ingresos = (df["Cantidad"] * df["Precio_unitario"]).sum()
     total_costes = (df["Cantidad"] * df["Coste_unitario"]).sum()
     beneficio_total = total_ingresos - total_costes
@@ -74,7 +28,6 @@ if uploaded_file:
     col5.metric("Día más fuerte", dia_mas_ventas)
     col6.metric("Día más flojo", dia_menos_ventas)
 
-    # Alertas
     st.subheader("🚨 Alertas automáticas")
     alertas = []
     for producto in productos:
@@ -88,27 +41,27 @@ if uploaded_file:
     else:
         st.success("✅ No se detectaron alertas importantes.")
 
-    # Gráfico: Predicción de demanda
+with tabs[1]:
+    st.subheader("📈 Análisis gráfico")
     df_dia = df.groupby("Fecha")["Cantidad"].sum().reset_index()
     df_pred = df_dia.tail(7).copy()
     df_pred["Fecha"] = df_pred["Fecha"] + pd.Timedelta(days=7)
     df_pred["Cantidad"] = df_pred["Cantidad"] * 1.05
-    fig_pred = px.line(pd.concat([df_dia, df_pred]), x="Fecha", y="Cantidad", title="📈 Predicción de ventas para próxima semana")
+    fig_pred = px.line(pd.concat([df_dia, df_pred]), x="Fecha", y="Cantidad", title="📈 Predicción de ventas")
     st.plotly_chart(fig_pred, use_container_width=True)
 
-    # Gráficos adicionales
-    st.subheader("📊 Ventas por hora (media)")
+    st.subheader("📊 Ventas por hora")
     df["Hora_int"] = df["Hora"].str[:2].astype(int)
     df_hora = df.groupby("Hora_int")["Cantidad"].mean().reset_index()
     fig_hora = px.bar(df_hora, x="Hora_int", y="Cantidad", title="Ventas medias por hora")
     st.plotly_chart(fig_hora, use_container_width=True)
 
-    st.subheader("📆 Ventas por día de la semana")
+    st.subheader("📆 Ventas por día")
     df_dia_semana = df.groupby("Dia")["Cantidad"].sum().reset_index()
     fig_dia = px.bar(df_dia_semana, x="Dia", y="Cantidad", title="Ventas por día de la semana")
     st.plotly_chart(fig_dia, use_container_width=True)
 
-    # Simulador IA: Precio óptimo
+with tabs[2]:
     st.subheader("🤖 Simulación IA de precios óptimos")
     for producto in productos:
         df_p = df[df["Producto"] == producto]
@@ -128,8 +81,8 @@ if uploaded_file:
         st.markdown(f"**{producto}** — Precio óptimo estimado: **{precio_optimo:.2f} €**")
         st.slider("Ajusta el precio", min_value=float(precios.min()*0.5), max_value=float(precios.max()*1.5), value=float(precio_optimo), step=0.05, key=producto)
 
-    # Recomendaciones y combos
-    st.subheader("💡 Recomendaciones de IA")
+with tabs[3]:
+    st.subheader("💡 Recomendaciones inteligentes")
     combinaciones = df.groupby("Fecha_Hora")["Producto"].apply(list)
     pares = []
     for lista in combinaciones:
@@ -142,9 +95,9 @@ if uploaded_file:
         df1 = df[df["Producto"] == prod1]
         df2 = df[df["Producto"] == prod2]
         sugerido = round((df1["Precio_unitario"].mean() + df2["Precio_unitario"].mean()) * 0.9, 2)
-        st.markdown(f"🧩 *{prod1} + {prod2}* se pidió {count} veces. Podrías venderlo por **{sugerido:.2f} €** en combo.")
+        st.markdown(f"🧩 *{prod1} + {prod2}* se pidió {count} veces. Combo sugerido: **{sugerido:.2f} €**")
 
-    # Exportar informe PDF
+with tabs[4]:
     st.subheader("📄 Generar informe PDF")
     def crear_pdf():
         pdf = FPDF()
@@ -171,7 +124,3 @@ if uploaded_file:
         crear_pdf()
         with open("informe_cafeteria.pdf", "rb") as f:
             st.download_button("Descargar informe", f, file_name="informe_cafeteria.pdf")
-
-# Pie de página
-st.markdown("---")
-st.caption("© 2025 - Herramienta de IA para cafeterías. Versión Demo – Todos los derechos reservados.")
