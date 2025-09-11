@@ -202,14 +202,22 @@ with tab1:
 # ===== TAB 2: Gráficos =====
 with tab2:
     st.subheader("📈 Predicción simple (naive)")
-    df_dia = df.groupby("fecha")["cantidad"].sum().reset_index().sort_values("fecha")
-    if len(df_dia) >= 7:
-        df_pred = df_dia.tail(7).copy()
-        df_pred["fecha"] = df_pred["fecha"] + pd.Timedelta(days=7)
-        df_pred["cantidad"] = (df_pred["cantidad"] * 1.05).round(2)
-        fig_pred = px.line(pd.concat([df_dia, df_pred]), x="fecha", y="cantidad",
-                           title="Predicción de ventas para la próxima semana (naive +5%)")
-        st.plotly_chart(fig_pred, use_container_width=True)
+   from prophet import Prophet  # ponlo arriba con los imports
+
+st.subheader("📈 Predicción de ventas con Prophet (14 días)")
+
+df_prophet = df.groupby("Fecha")["Cantidad"].sum().reset_index()
+df_prophet = df_prophet.rename(columns={"Fecha": "ds", "Cantidad": "y"})
+
+if len(df_prophet) > 7:
+    m = Prophet(daily_seasonality=True, weekly_seasonality=True)
+    m.fit(df_prophet)
+    future = m.make_future_dataframe(periods=14)
+    forecast = m.predict(future)
+    fig_forecast = px.line(forecast, x="ds", y="yhat", title="Predicción de ventas (14 días)")
+    st.plotly_chart(fig_forecast, use_container_width=True)
+else:
+    st.info("Se necesitan al menos 7 días de datos para entrenar la predicción.")
     else:
         st.info("Se necesitan al menos 7 días para una predicción naive.")
 
