@@ -1,6 +1,6 @@
 streamlit
 pandas
 plotly
-fpdf
+fpdf2
 openpyxl
 scikit-learn
