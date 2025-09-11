@@ -6,6 +6,8 @@ import streamlit as st
 from fpdf import FPDF
 from sklearn.linear_model import LinearRegression
 from collections import Counter
+from prophet import Prophet
+from sklearn.preprocessing import PolynomialFeatures
 
 st.set_page_config(page_title="Informe Cafetería", page_icon="☕", layout="wide")
 
