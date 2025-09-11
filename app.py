@@ -228,6 +228,111 @@ with tab2:
     fig_dow = px.bar(df_dow, x="Día", y="Cantidad", title="Ventas por día de la semana")
     st.plotly_chart(fig_dow, use_container_width=True)
 
+# ===== Heatmap: Ingresos por hora x día =====
+st.subheader("🔥 Mapa de calor: ingresos por hora y día")
+
+tmp = df.copy()
+# Ingresos = Cantidad * Precio_unitario
+tmp["Ingresos"] = tmp["Cantidad"] * tmp["Precio_unitario"]
+
+# Hora en entero 0–23 (maneja 'HH:MM' y NaN)
+tmp["Hora_int"] = pd.to_datetime(tmp["Hora"].astype(str).str[:5], format="%H:%M", errors="coerce").dt.hour
+# Día semana en español (evita depender del locale)
+dow_map = {0:"Lunes",1:"Martes",2:"Miércoles",3:"Jueves",4:"Viernes",5:"Sábado",6:"Domingo"}
+tmp["DOW"] = tmp["Fecha"].dt.dayofweek.map(dow_map)
+
+# Tabla dinámica: filas = día, columnas = hora, valores = ingresos
+pivot = (tmp.dropna(subset=["Hora_int"])
+             .pivot_table(index="DOW", columns="Hora_int", values="Ingresos", aggfunc="sum")
+             .reindex(["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"])
+             .fillna(0))
+
+if not pivot.empty:
+    fig_heat = px.imshow(
+        pivot,
+        labels=dict(x="Hora", y="Día", color="€"),
+        title="Mapa de calor de ingresos (día × hora)",
+        aspect="auto"
+    )
+    st.plotly_chart(fig_heat, use_container_width=True)
+else:
+    st.info("No hay datos suficientes de hora para construir el mapa de calor.")
+
+# ===== Pie: % de ingresos por producto (Top 10) =====
+st.subheader("🥧 % de ingresos por producto (Top 10)")
+ing_por_producto = (
+    df.assign(Importe = df["Cantidad"] * df["Precio_unitario"])
+      .groupby("Producto")["Importe"].sum()
+      .sort_values(ascending=False)
+      .head(10)
+)
+
+if len(ing_por_producto) > 0:
+    fig_pie = px.pie(
+        values=ing_por_producto.values,
+        names=ing_por_producto.index,
+        title="Porcentaje de ingresos por producto (Top 10)"
+    )
+    fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+    st.plotly_chart(fig_pie, use_container_width=True)
+else:
+    st.info("No hay productos suficientes para el gráfico de porcentajes.")
+
+# ===== Ticket medio por día =====
+st.subheader("🧾 Ticket medio por día (€)")
+
+df_t = df.assign(Importe = df["Cantidad"] * df["Precio_unitario"]).copy()
+
+if "Ticket_ID" in df_t.columns:
+    tix = df_t.groupby(["Fecha","Ticket_ID"])["Importe"].sum().reset_index()
+else:
+    # Fallback: usar Fecha_Hora como proxy de ticket
+    if "Fecha_Hora" not in df_t.columns:
+        df_t["Fecha_Hora"] = df_t["Fecha"].astype(str) + " " + df_t["Hora"].astype(str)
+    tix = df_t.groupby(["Fecha","Fecha_Hora"])["Importe"].sum().reset_index()
+
+ticket_medio_diario = tix.groupby("Fecha")["Importe"].mean().reset_index(name="Ticket_medio")
+fig_tm = px.line(ticket_medio_diario, x="Fecha", y="Ticket_medio", title="Ticket medio diario (€)")
+st.plotly_chart(fig_tm, use_container_width=True)
+
+# ===== Comparativa: última semana vs anterior =====
+st.subheader("📅 Ingresos: última semana vs anterior")
+
+daily_ingresos = (
+    df.assign(Importe = df["Cantidad"] * df["Precio_unitario"])
+      .groupby("Fecha")["Importe"].sum()
+      .reset_index()
+      .sort_values("Fecha")
+)
+
+if len(daily_ingresos) >= 2:
+    # Semana que empieza en lunes
+    daily_ingresos["week_start"] = (daily_ingresos["Fecha"] - pd.to_timedelta(daily_ingresos["Fecha"].dt.weekday, unit="D"))
+    weekly = daily_ingresos.groupby("week_start")["Importe"].sum().reset_index().sort_values("week_start")
+
+    if len(weekly) >= 2:
+        last2 = weekly.tail(2)
+        s_prev, s_ult = last2.iloc[0], last2.iloc[1]
+        dif_abs = s_ult["Importe"] - s_prev["Importe"]
+        dif_pct = (dif_abs / s_prev["Importe"] * 100) if s_prev["Importe"] > 0 else np.nan
+
+        colA, colB, colC = st.columns(3)
+        colA.metric("Semana anterior", f"{s_prev['Importe']:.2f} €")
+        colB.metric("Última semana", f"{s_ult['Importe']:.2f} €", f"{dif_abs:+.2f} €")
+        colC.metric("Variación %", f"{dif_pct:+.1f}%")
+
+        fig_sem = px.bar(
+            last2,
+            x=last2["week_start"].dt.strftime("%d %b"),
+            y="Importe",
+            title="Ingresos por semana (comparativa)"
+        )
+        st.plotly_chart(fig_sem, use_container_width=True)
+    else:
+        st.info("Se necesitan al menos 2 semanas distintas en los datos.")
+else:
+    st.info("Se necesitan al menos 2 días para comparar semanas.")
+
 # ===== TAB 3: Simulador IA (lineal) =====
 with tab3:
     st.subheader("🤖 Simulación IA: Precio óptimo por producto (lineal)")
