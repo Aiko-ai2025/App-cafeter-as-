@@ -5,3 +5,4 @@ fpdf
 openpyxl
 scikit-learn
 numpy
+prophet
