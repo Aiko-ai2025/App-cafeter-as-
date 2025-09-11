@@ -4,3 +4,4 @@ plotly
 fpdf
 openpyxl
 scikit-learn
+numpy
