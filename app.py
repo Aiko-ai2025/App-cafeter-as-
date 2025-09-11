@@ -335,26 +335,33 @@ with tab2:
     else:
         st.info("Se necesitan al menos 2 días para comparar semanas.")
 
-# ===== TAB 3: Simulador IA (lineal) =====
+# ===== TAB 3: Simulador IA (avanzado) =====
 with tab3:
-    st.subheader("🤖 Simulación IA: Precio óptimo por producto (lineal)")
+    st.subheader("🤖 Simulación IA: Precio óptimo avanzado (elasticidad)")
+
     for p in productos:
         dp = df[df["producto"] == p]
+        # Necesitamos variación de precio y suficiente muestra
         if dp["precio_unitario"].nunique() < 2 or len(dp) < 8:
             continue
+
         X = dp["precio_unitario"].values.reshape(-1,1)
         y = dp["cantidad"].values
+
+        poly = PolynomialFeatures(degree=2)
+        X_poly = poly.fit_transform(X)
+
         model = LinearRegression()
-        model.fit(X, y)
+        model.fit(X_poly, y)
 
         pmin = float(max(0.01, dp["precio_unitario"].min()*0.7))
         pmax = float(dp["precio_unitario"].max()*1.5)
-        precios_sim = np.linspace(pmin, pmax, 60)
-        demanda_sim = model.predict(precios_sim.reshape(-1,1))
-        demanda_sim = np.clip(demanda_sim, 0, None)  # no negativa
+        precios_sim = np.linspace(pmin, pmax, 100).reshape(-1,1)
+        cant_sim = model.predict(poly.transform(precios_sim))
+        cant_sim = np.clip(cant_sim, 0, None)  # no negativas
 
-        ingreso = precios_sim * demanda_sim
-        precio_opt = float(precios_sim[np.argmax(ingreso)])
+        ingresos = precios_sim.flatten() * cant_sim
+        precio_opt = float(precios_sim[np.argmax(ingresos)][0])
 
         st.markdown(f"**{p}** — Precio óptimo estimado: **{precio_opt:.2f} €**")
         st.slider("Ajusta el precio",
@@ -362,7 +369,7 @@ with tab3:
                   max_value=float(pmax),
                   value=float(precio_opt),
                   step=0.05,
-                  key=f"slider_{p}")
+                  key=f"slider_{p}_adv")
 
 # ===== TAB 4: Recomendaciones (combos) =====
 with tab4:
