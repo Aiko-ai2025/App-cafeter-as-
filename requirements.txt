@@ -1,7 +1,6 @@
 streamlit
 pandas
 plotly
-fpdf
 openpyxl
 scikit-learn
 numpy
