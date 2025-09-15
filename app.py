@@ -15,7 +15,7 @@ st.set_page_config(page_title="Informe Cafetería", page_icon="☕", layout="wid
 st.markdown("""
 <style>
     .stApp {
-        background-color: #E6F7FF;  /* Fondo azul claro; usa #F5F5DC para beige */
+        background-color: #F5F5DC;  /* Fondo beige*/
     }
     h1, h2, h3, h4 { color: #0F8A84; }
     .stButton>button { background-color: #0F8A84; color: white; border-radius: 8px; }
