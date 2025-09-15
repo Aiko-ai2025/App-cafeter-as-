@@ -6,3 +6,5 @@ openpyxl
 scikit-learn
 numpy
 prophet
+fpdf2
+kaleido
