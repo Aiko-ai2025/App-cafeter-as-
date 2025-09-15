@@ -11,22 +11,27 @@ from sklearn.preprocessing import PolynomialFeatures
 
 st.set_page_config(page_title="Informe Cafetería", page_icon="☕", layout="wide")
 
-# ==== Estilo y logo ====
+# ==== Estilo y logo ===
 st.markdown("""
 <style>
-    .main { background-color: #E6F7FF; }
+    .stApp {
+        background-color: #E6F7FF;  /* Fondo azul claro (cambia por #F5F5DC si quieres beige) */
+    }
     h1, h2, h3, h4 { color: #0F8A84; }
     .stButton>button { background-color: #0F8A84; color: white; border-radius: 8px; }
     header { visibility: hidden; }
     [data-testid="stSidebar"] { background-color: #FAF8F2; }
-    .logo-container { display: flex; justify-content: center; margin-bottom: 10px; }
+    .logo-container { 
+        display: flex; 
+        justify-content: center; 
+        margin-top: 20px;   /* margen superior */
+        margin-bottom: 20px; 
+    }
 </style>
+<div class="logo-container">
+    <img src="logo.png" width="150">
+</div>
 """, unsafe_allow_html=True)
-
-# Mostrar logo desde archivo local
-st.markdown('<div class="logo-container">', unsafe_allow_html=True)
-st.image("logo.png", width=150)
-st.markdown('</div>', unsafe_allow_html=True)
 
 st.title("☕ Análisis Inteligente para Cafeterías")
 st.markdown("""
