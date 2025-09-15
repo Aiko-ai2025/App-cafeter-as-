@@ -203,7 +203,7 @@ with tab1:
 
 # ===== TAB 2: Gráficos =====
 with tab2:
-    # ----- Predicción con Prophet -----
+    # ----- Predicción con Prophet + franja de confianza -----
     st.subheader("📈 Predicción de ventas con Prophet (14 días)")
 
     df_prophet = df.groupby("fecha")["cantidad"].sum().reset_index()
@@ -215,8 +215,31 @@ with tab2:
         future = m.make_future_dataframe(periods=14)
         forecast = m.predict(future)
 
-        fig_forecast = px.line(forecast, x="ds", y="yhat", title="Predicción de ventas (14 días)")
-        st.plotly_chart(fig_forecast, use_container_width=True)
+        # Gráfico con histórico, yhat y banda de confianza (yhat_lower, yhat_upper)
+        import plotly.graph_objects as go
+        fig_fc = go.Figure()
+        # Histórico
+        fig_fc.add_trace(go.Scatter(
+            x=df_prophet["ds"], y=df_prophet["y"],
+            mode="lines+markers", name="Ventas históricas"
+        ))
+        # Predicción central
+        fig_fc.add_trace(go.Scatter(
+            x=forecast["ds"], y=forecast["yhat"],
+            mode="lines", name="Predicción (yhat)"
+        ))
+        # Banda de confianza
+        fig_fc.add_trace(go.Scatter(
+            x=pd.concat([forecast["ds"], forecast["ds"][::-1]]),
+            y=pd.concat([forecast["yhat_upper"], forecast["yhat_lower"][::-1]]),
+            fill="toself", name="Confianza",
+            line=dict(width=0), opacity=0.2, hoverinfo="skip"
+        ))
+        fig_fc.update_layout(
+            title="Predicción de ventas (14 días) con franja de confianza",
+            xaxis_title="Fecha", yaxis_title="Unidades"
+        )
+        st.plotly_chart(fig_fc, use_container_width=True)
     else:
         st.info("Se necesitan al menos 7 días de datos para entrenar la predicción.")
 
@@ -335,55 +358,147 @@ with tab2:
     else:
         st.info("Se necesitan al menos 2 días para comparar semanas.")
 
-# ===== TAB 3: Simulador IA (avanzado) =====
+# ===== TAB 3: Simulador IA (avanzado con curva y fallback) =====
 with tab3:
     st.subheader("🤖 Simulación IA: Precio óptimo avanzado (elasticidad)")
 
+    # Controles del fallback
+    usar_fallback = st.checkbox(
+        "Usar modo alternativo si no hay variación de precios (elasticidad supuesta)",
+        value=True
+    )
+    elasticidad_defecto = st.number_input(
+        "Elasticidad por defecto (negativa)", value=-1.10, step=0.05, format="%.2f"
+    )
+
+    from plotly.subplots import make_subplots
+    import plotly.graph_objects as go
+
+    mostrados = 0
+    omitidos = []
+
     for p in productos:
-        dp = df[df["producto"] == p]
-        # Necesitamos variación de precio y suficiente muestra
-        if dp["precio_unitario"].nunique() < 2 or len(dp) < 8:
+        dp = df[df["producto"] == p].copy()
+
+        if "precio_unitario" not in dp.columns or "cantidad" not in dp.columns or len(dp) < 2:
+            omitidos.append((p, "Datos insuficientes"))
             continue
 
-        X = dp["precio_unitario"].values.reshape(-1,1)
-        y = dp["cantidad"].values
+        nun = dp["precio_unitario"].nunique()
 
-        poly = PolynomialFeatures(degree=2)
-        X_poly = poly.fit_transform(X)
+        # ===== MODO AVANZADO (polinómico) si existe variación de precio =====
+        if nun >= 2 and len(dp) >= 8:
+            X = dp["precio_unitario"].values.reshape(-1,1)
+            y = dp["cantidad"].values
 
-        model = LinearRegression()
-        model.fit(X_poly, y)
+            poly = PolynomialFeatures(degree=2)
+            X_poly = poly.fit_transform(X)
 
-        pmin = float(max(0.01, dp["precio_unitario"].min()*0.7))
-        pmax = float(dp["precio_unitario"].max()*1.5)
-        precios_sim = np.linspace(pmin, pmax, 100).reshape(-1,1)
-        cant_sim = model.predict(poly.transform(precios_sim))
-        cant_sim = np.clip(cant_sim, 0, None)  # no negativas
+            model = LinearRegression()
+            model.fit(X_poly, y)
 
-        ingresos = precios_sim.flatten() * cant_sim
-        precio_opt = float(precios_sim[np.argmax(ingresos)][0])
+            pmin = float(max(0.01, dp["precio_unitario"].min()*0.7))
+            pmax = float(dp["precio_unitario"].max()*1.5)
+            precios_sim = np.linspace(pmin, pmax, 120).reshape(-1,1)
 
-        st.markdown(f"**{p}** — Precio óptimo estimado: **{precio_opt:.2f} €**")
-        st.slider("Ajusta el precio",
-                  min_value=float(pmin),
-                  max_value=float(pmax),
-                  value=float(precio_opt),
-                  step=0.05,
-                  key=f"slider_{p}_adv")
+            demanda = model.predict(poly.transform(precios_sim))
+            demanda = np.clip(demanda, 0, None)
+            ingresos = precios_sim.flatten() * demanda
+
+            precio_opt = float(precios_sim[np.argmax(ingresos)][0])
+
+            # Curvas con doble eje: Demanda (izq) e Ingresos (dcha)
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            fig.add_trace(go.Scatter(x=precios_sim.flatten(), y=demanda, name="Demanda estimada"), secondary_y=False)
+            fig.add_trace(go.Scatter(x=precios_sim.flatten(), y=ingresos, name="Ingresos estimados"), secondary_y=True)
+            fig.add_vline(x=precio_opt, line_dash="dash",
+                          annotation_text=f"Óptimo {precio_opt:.2f}€", annotation_position="top right")
+            fig.update_layout(title=f"{p} — Curva precio vs demanda/ingresos")
+            fig.update_xaxes(title_text="Precio (€)")
+            fig.update_yaxes(title_text="Demanda (uds)", secondary_y=False)
+            fig.update_yaxes(title_text="Ingresos (€)", secondary_y=True)
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.markdown(f"**{p}** — Precio óptimo estimado: **{precio_opt:.2f} €**")
+            st.slider("Ajusta el precio",
+                      min_value=float(pmin), max_value=float(pmax),
+                      value=float(precio_opt), step=0.05,
+                      key=f"slider_{p}_adv")
+            mostrados += 1
+
+        # ===== FALLBACK (elasticidad supuesta) si NO hay variación =====
+        else:
+            if not usar_fallback:
+                omitidos.append((p, "Sin variación de precio o pocas filas"))
+                continue
+
+            p0 = float(dp["precio_unitario"].mean())
+            q0 = float(dp["cantidad"].mean())
+            if p0 <= 0 or q0 <= 0:
+                omitidos.append((p, "Precio/cantidad base inválida"))
+                continue
+
+            pmin = max(0.01, p0*0.7)
+            pmax = p0*1.5
+            precios_sim = np.linspace(pmin, pmax, 120)
+            e = float(elasticidad_defecto)  # negativa
+
+            # Demanda por elasticidad constante: Q = Q0 * (P/P0)^e
+            demanda = q0 * (precios_sim / p0) ** e
+            demanda = np.clip(demanda, 0, None)
+            ingresos = precios_sim * demanda
+            precio_opt = float(precios_sim[np.argmax(ingresos)])
+
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            fig.add_trace(go.Scatter(x=precios_sim, y=demanda, name="Demanda (fallback)"), secondary_y=False)
+            fig.add_trace(go.Scatter(x=precios_sim, y=ingresos, name="Ingresos (fallback)"), secondary_y=True)
+            fig.add_vline(x=precio_opt, line_dash="dash",
+                          annotation_text=f"Óptimo {precio_opt:.2f}€", annotation_position="top right")
+            fig.update_layout(title=f"{p} — Curva (fallback, e={e:.2f})")
+            fig.update_xaxes(title_text="Precio (€)")
+            fig.update_yaxes(title_text="Demanda (uds)", secondary_y=False)
+            fig.update_yaxes(title_text="Ingresos (€)", secondary_y=True)
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.markdown(f"**{p}** — (fallback) Precio óptimo: **{precio_opt:.2f} €**  "
+                        f"<span style='color:gray'>(elasticidad {e:.2f})</span>", unsafe_allow_html=True)
+            st.slider("Ajusta el precio",
+                      min_value=float(pmin), max_value=float(pmax),
+                      value=float(precio_opt), step=0.05,
+                      key=f"slider_{p}_fb")
+            mostrados += 1
+
+    if mostrados == 0:
+        st.warning("No se pudo simular ningún producto. Activa el modo alternativo o revisa que existan diferentes precios históricos.")
+
+    if omitidos:
+        st.caption("Productos omitidos y motivo:")
+        st.dataframe(pd.DataFrame(omitidos, columns=["Producto","Motivo"]))
 
 # ===== TAB 4: Recomendaciones (combos) =====
 with tab4:
     st.subheader("💡 Recomendaciones de combos")
+
+    # Construcción de pares (productos que aparecen juntos en un mismo ticket)
     combinaciones = df.groupby("ticket_id")["producto"].apply(list)
     pares = []
     for lista in combinaciones:
-        lista = list(set(map(str, lista)))
+        lista = list(set(map(str, lista)))  # únicos por ticket
         for i in range(len(lista)):
             for j in range(i+1, len(lista)):
                 pares.append(tuple(sorted((lista[i], lista[j]))))
-    top_combos = Counter(pares).most_common(5)
+
+    # Parámetros de visualización
+    freq_min = st.slider("Frecuencia mínima para considerar un combo en la red", 1, 20, 2, step=1)
+    top_n = st.slider("Nº máximo de enlaces (Top combos) para la red", 5, 50, 12, step=1)
+
+    # TOP combos (texto con precio sugerido)
+    from collections import Counter
+    cnt = Counter(pares)
+    top_combos = [(pair, c) for pair, c in cnt.most_common(50) if c >= freq_min][:5]
+
     if not top_combos:
-        st.info("No hay suficientes tickets con ≥2 productos para sugerir combos.")
+        st.info("No hay suficientes tickets con ≥2 productos para sugerir combos con los filtros actuales.")
     else:
         for (p1, p2), count in top_combos:
             v1 = df[df["producto"] == p1]["precio_unitario"].mean()
@@ -391,8 +506,85 @@ with tab4:
             if pd.isna(v1) or pd.isna(v2):
                 continue
             sugerido = round((v1 + v2) * 0.90, 2)  # -10% pack
-            st.markdown(f"🧩 *{p1} + {p2}* apareció en **{count}** tickets. "
-                        f"Propón el combo a **{sugerido:.2f} €** (-10%).")
+            st.markdown(
+                f"🧩 *{p1} + {p2}* apareció **{count}** veces. "
+                f"Sugerencia de combo: **{sugerido:.2f} €** (-10%)."
+            )
+
+    st.markdown("---")
+    st.subheader("🕸️ Mapa de combos (red de productos)")
+
+    if len(pares) == 0:
+        st.info("No hay suficientes tickets con ≥2 productos para mostrar la red.")
+    else:
+        # Filtrar enlaces por frecuencia mínima y limitar a top_n
+        edges = [(pair, c) for pair, c in cnt.most_common(200) if c >= freq_min][:top_n]
+        if not edges:
+            st.info("No hay enlaces que cumplan el umbral de frecuencia. Baja la 'Frecuencia mínima'.")
+        else:
+            # Preparar nodos
+            nodos = sorted(set([a for (a, b), _ in edges] + [b for (a, b), _ in edges]))
+            n = len(nodos)
+            if n < 2:
+                st.info("La red necesita al menos 2 productos distintos.")
+            else:
+                # Colocar nodos en círculo
+                from math import cos, sin, pi
+                import plotly.graph_objects as go
+
+                R = 1.0
+                pos = {nodos[i]: (R*cos(2*pi*i/n), R*sin(2*pi*i/n)) for i in range(n)}
+
+                # Aristas
+                edge_x, edge_y, widths = [], [], []
+                max_w = max(w for _, w in edges) if edges else 1
+                for (a, b), w in edges:
+                    x0, y0 = pos[a]
+                    x1, y1 = pos[b]
+                    edge_x += [x0, x1, None]
+                    edge_y += [y0, y1, None]
+                    widths.append(w)
+
+                fig_net = go.Figure()
+
+                # Dibujar líneas (mismo estilo, grosor proporcional al peso medio)
+                mean_w = (sum(widths)/len(widths)) if widths else 1
+                line_width = max(1.5, 4.0 * (mean_w / max_w))
+
+                fig_net.add_trace(go.Scatter(
+                    x=edge_x, y=edge_y, mode='lines',
+                    line=dict(width=line_width),
+                    hoverinfo='skip',
+                    name="Combos"
+                ))
+
+                # Tamaño de nodo según grado (suma de pesos incidentes)
+                grado = {k: 0 for k in nodos}
+                for (a, b), w in edges:
+                    grado[a] += w; grado[b] += w
+                max_grado = max(grado.values()) if grado else 1
+                sizes = [10 + 20 * (grado[k]/max_grado) for k in nodos]
+
+                # Nodos
+                fig_net.add_trace(go.Scatter(
+                    x=[pos[k][0] for k in nodos],
+                    y=[pos[k][1] for k in nodos],
+                    mode='markers+text',
+                    marker=dict(size=sizes),
+                    text=nodos,
+                    textposition='top center',
+                    hovertext=[f"{k} — grado {grado[k]}" for k in nodos],
+                    hoverinfo="text",
+                    name="Productos"
+                ))
+
+                fig_net.update_layout(
+                    title="Red de productos que se piden juntos (filtrada por frecuencia)",
+                    showlegend=False,
+                    xaxis=dict(visible=False), yaxis=dict(visible=False),
+                    height=520, margin=dict(l=10, r=10, t=60, b=10)
+                )
+                st.plotly_chart(fig_net, use_container_width=True)
 
 # ===== TAB 5: PDF =====
 with tab5:
