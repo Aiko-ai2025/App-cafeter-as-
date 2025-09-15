@@ -7,4 +7,4 @@ scikit-learn
 numpy
 prophet
 fpdf2
-kaleido
+kaleido==0.2.1
