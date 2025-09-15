@@ -29,8 +29,10 @@ st.markdown("""
     }
 </style>
 <div class="logo-container">
-    <img src="logo.png" width="150">
 </div>
+""", unsafe_allow_html=True)
+
+st.image("logo.png", width=150)
 """, unsafe_allow_html=True)
 
 st.title("☕ Análisis Inteligente para Cafeterías")
