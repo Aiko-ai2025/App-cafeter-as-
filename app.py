@@ -11,29 +11,24 @@ from sklearn.preprocessing import PolynomialFeatures
 
 st.set_page_config(page_title="Informe Cafetería", page_icon="☕", layout="wide")
 
-# ==== Estilo y logo ===
+# ==== Estilo y logo ====
 st.markdown("""
 <style>
     .stApp {
-        background-color: #E6F7FF;  /* Fondo azul claro (cambia por #F5F5DC si quieres beige) */
+        background-color: #E6F7FF;  /* Fondo azul claro; usa #F5F5DC para beige */
     }
     h1, h2, h3, h4 { color: #0F8A84; }
     .stButton>button { background-color: #0F8A84; color: white; border-radius: 8px; }
     header { visibility: hidden; }
     [data-testid="stSidebar"] { background-color: #FAF8F2; }
-    .logo-container { 
-        display: flex; 
-        justify-content: center; 
-        margin-top: 20px;   /* margen superior */
-        margin-bottom: 20px; 
-    }
+    .logo-container { display: flex; justify-content: center; margin-top: 20px; margin-bottom: 20px; }
 </style>
-<div class="logo-container">
-</div>
 """, unsafe_allow_html=True)
 
-st.image("logo.png", width=150)
-""", unsafe_allow_html=True)
+# Mostrar logo (archivo local en la misma carpeta que app.py)
+col1, col2, col3 = st.columns([1,2,1])
+with col2:
+    st.image("logo.png", width=150)
 
 st.title("☕ Análisis Inteligente para Cafeterías")
 st.markdown("""
