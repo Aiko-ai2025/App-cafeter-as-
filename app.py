@@ -592,31 +592,34 @@ with tab4:
 with tab5:
     st.subheader("📄 Exportar informe PDF (incluye todo lo visible)")
 
-    import os
-    from datetime import datetime
-    from fpdf import FPDF
+    import importlib
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
-    # ---------- Utilidades ----------
-    def eur(x):
-        try:
-            return f"{x:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
-        except Exception:
-            return f"{x:.2f} €"
+    # Diagnóstico de dependencias
+    KALEIDO_OK = importlib.util.find_spec("kaleido") is not None
+    PROPHET_OK = importlib.util.find_spec("prophet") is not None
+    if not KALEIDO_OK:
+        st.error("Falta 'kaleido' para exportar gráficas a PNG. Añádelo a requirements.txt y vuelve a desplegar.")
+    if not PROPHET_OK:
+        st.warning("Falta 'prophet'. La predicción no se incluirá en el PDF.")
 
+    # ---------- Utilidades ----------
     def save_plotly_png(fig, name, w=1000, h=600, scale=2):
-        """Guarda un fig de Plotly a PNG usando kaleido y devuelve la ruta (o None si falla)."""
+        """Guarda un fig de Plotly a PNG (kaleido) y devuelve la ruta, o None si falla."""
+        if not KALEIDO_OK or fig is None:
+            return None
         path = f"{name}.png"
         try:
             fig.write_image(path, width=w, height=h, scale=scale)
             return path
         except Exception as e:
-            st.warning(f"No pude exportar {name}.png ({e}). Asegúrate de tener 'kaleido' en requirements.")
+            st.warning(f"No pude exportar {name}.png ({e})")
             return None
 
-    # ---------- GRÁFICAS: mismas que en la web ----------
     def fig_prediccion():
+        if not PROPHET_OK:
+            return None
         dfp = df.groupby("fecha")["cantidad"].sum().reset_index().rename(columns={"fecha":"ds","cantidad":"y"})
         if len(dfp) < 7:
             return None
@@ -632,7 +635,7 @@ with tab5:
             y=pd.concat([fc["yhat_upper"], fc["yhat_lower"][::-1]]),
             fill="toself", name="Confianza", line=dict(width=0), opacity=0.2, hoverinfo="skip"
         ))
-        fig.update_layout(title="Predicción (14 días)", margin=dict(l=20, r=20, t=50, b=20), xaxis_title="Fecha", yaxis_title="Unidades")
+        fig.update_layout(title="Predicción (14 días)", xaxis_title="Fecha", yaxis_title="Unids")
         return fig
 
     def fig_horas():
@@ -656,42 +659,28 @@ with tab5:
             return None
         tmp["hora"] = tmp["hora"].astype(str).str[:5]
         tmp["hora_int"] = pd.to_datetime(tmp["hora"], format="%H:%M", errors="coerce").dt.hour
-        # total
-        if "total" not in tmp.columns:
-            if "precio_unitario" in tmp.columns and "cantidad" in tmp.columns:
-                tmp["total"] = (pd.to_numeric(tmp["cantidad"], errors="coerce").fillna(0) *
-                                pd.to_numeric(tmp["precio_unitario"], errors="coerce").fillna(0))
-            else:
-                return None
-        tmp["ingresos"] = pd.to_numeric(tmp["total"], errors="coerce").fillna(0)
+        if "total" not in tmp.columns and {"cantidad","precio_unitario"}.issubset(tmp.columns):
+            tmp["total"] = tmp["cantidad"] * tmp["precio_unitario"]
+        tmp["ingresos"] = pd.to_numeric(tmp.get("total", 0), errors="coerce").fillna(0)
         dow_map = {0:"Lunes",1:"Martes",2:"Miércoles",3:"Jueves",4:"Viernes",5:"Sábado",6:"Domingo"}
         tmp["dow"] = tmp["fecha"].dt.dayofweek.map(dow_map)
         pv = (tmp.dropna(subset=["hora_int","dow"])
                 .pivot_table(index="dow", columns="hora_int", values="ingresos", aggfunc="sum")
                 .reindex(DOW_ORDER).fillna(0))
-        if pv.empty:
-            return None
+        if pv.empty: return None
         fig = px.imshow(pv, labels=dict(x="Hora", y="Día", color="€"),
                         title="Mapa de calor de ingresos (día × hora)", aspect="auto")
-        fig.update_layout(margin=dict(l=20, r=20, t=50, b=20))
         return fig
 
     def fig_pie_top():
-        d = df.copy()
-        d.columns = [c.lower() for c in d.columns]
-        if "producto" not in d.columns:
-            return None
-        if "total" not in d.columns:
-            if "precio_unitario" in d.columns and "cantidad" in d.columns:
-                d["total"] = (pd.to_numeric(d["cantidad"], errors="coerce").fillna(0) *
-                              pd.to_numeric(d["precio_unitario"], errors="coerce").fillna(0))
-            else:
-                return None
+        d = df.copy(); d.columns = [c.lower() for c in d.columns]
+        if "producto" not in d.columns: return None
+        if "total" not in d.columns and {"cantidad","precio_unitario"}.issubset(d.columns):
+            d["total"] = d["cantidad"] * d["precio_unitario"]
         top = d.groupby("producto")["total"].sum().sort_values(ascending=False).head(10)
         if top.empty: return None
         fig = px.pie(values=top.values, names=top.index, title="Top 10 productos por ingresos (%)")
         fig.update_traces(textposition="inside", textinfo="percent+label")
-        fig.update_layout(margin=dict(l=20, r=20, t=50, b=20))
         return fig
 
     def fig_ticket_medio():
@@ -699,7 +688,7 @@ with tab5:
         if "ticket_id" not in d.columns:
             d["ticket_id"] = d["fecha"].dt.strftime("%Y-%m-%d") + " " + d["hora"].astype(str).str[:5]
         if "total" not in d.columns and {"cantidad","precio_unitario"}.issubset(d.columns):
-            d["total"] = d["cantidad"]*d["precio_unitario"]
+            d["total"] = d["cantidad"] * d["precio_unitario"]
         tix = (d.groupby(["fecha","ticket_id"])["total"].sum()
                .reset_index().rename(columns={"total":"importe"}))
         s = (tix.groupby("fecha")["importe"].mean().reset_index(name="ticket_medio"))
@@ -708,21 +697,20 @@ with tab5:
     def fig_semana_vs_anterior():
         d = df.copy()
         if "total" not in d.columns and {"cantidad","precio_unitario"}.issubset(d.columns):
-            d["total"] = d["cantidad"]*d["precio_unitario"]
+            d["total"] = d["cantidad"] * d["precio_unitario"]
         daily = d.groupby("fecha")["total"].sum().reset_index().sort_values("fecha")
         if len(daily) < 2: return None
-        daily["week_start"] = (daily["fecha"] - pd.to_timedelta(daily["fecha"].dt.weekday, unit="D"))
+        daily["week_start"] = daily["fecha"] - pd.to_timedelta(daily["fecha"].dt.weekday, unit="D")
         weekly = daily.groupby("week_start")["total"].sum().reset_index().sort_values("week_start")
         if len(weekly) < 2: return None
         last2 = weekly.tail(2).assign(semana=weekly.tail(2)["week_start"].dt.strftime("%d %b"))
         return px.bar(last2, x="semana", y="total", title="Ingresos por semana (comparativa)")
 
     def fig_pricing_producto(dp: pd.DataFrame, nombre: str):
-        """Curvas del simulador IA para un producto concreto (modo avanzado o fallback)."""
         if "precio_unitario" not in dp.columns or "cantidad" not in dp.columns or len(dp) < 2:
             return None
         nun = dp["precio_unitario"].nunique()
-        # avanzado
+        # Avanzado (polinómico)
         if nun >= 2 and len(dp) >= 8:
             X = dp["precio_unitario"].values.reshape(-1,1)
             y = dp["cantidad"].values
@@ -743,7 +731,7 @@ with tab5:
             fig.update_yaxes(title_text="Demanda (uds)", secondary_y=False)
             fig.update_yaxes(title_text="Ingresos (€)", secondary_y=True)
             return fig
-        # fallback (elasticidad -1.10)
+        # Fallback (elasticidad)
         p0 = float(dp["precio_unitario"].mean()); q0 = float(dp["cantidad"].mean())
         if p0 <= 0 or q0 <= 0: return None
         P = np.linspace(p0*0.7, p0*1.5, 120)
@@ -761,7 +749,6 @@ with tab5:
         return fig
 
     def fig_grafo_combos():
-        # Reutiliza la lógica del Tab 4 (pares y red simple en círculo)
         combinaciones = df.groupby("ticket_id")["producto"].apply(list)
         pares = []
         for lista in combinaciones:
@@ -769,7 +756,7 @@ with tab5:
             for i in range(len(lista)):
                 for j in range(i+1, len(lista)):
                     pares.append(tuple(sorted((lista[i], lista[j]))))
-        if len(pares) == 0: return None
+        if not pares: return None
         cnt = Counter(pares)
         edges = cnt.most_common(12)
         nodos = sorted(set([a for (a,b),_ in edges] + [b for (a,b),_ in edges]))
@@ -782,7 +769,6 @@ with tab5:
             edge_x += [x0,x1,None]; edge_y += [y0,y1,None]
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=edge_x, y=edge_y, mode="lines", line=dict(width=2), hoverinfo="skip"))
-        # tamaño nodo ~ grado
         grado = {k:0 for k in nodos}
         for (a,b), w in edges:
             grado[a]+=w; grado[b]+=w
@@ -795,55 +781,52 @@ with tab5:
                           showlegend=False, xaxis=dict(visible=False), yaxis=dict(visible=False))
         return fig
 
-    # ---------- KPIs y Alertas (los recalculamos para no depender del Tab 1) ----------
+    # ---------- KPIs/Alertas (recalcular para el PDF) ----------
     total_ingresos = float((df["cantidad"] * df["precio_unitario"]).sum())
     total_costes = float((df["cantidad"] * df.get("coste_unitario", 0)).sum())
     beneficio_total = total_ingresos - total_costes
-
     if "ticket_id" not in df.columns:
         df["ticket_id"] = df["fecha"].dt.strftime("%Y-%m-%d") + " " + df["hora"].astype(str).str[:5]
     if "total" not in df.columns:
         df["total"] = df["cantidad"] * df["precio_unitario"]
-
     tickets = df.groupby("ticket_id")["total"].sum()
     n_tickets = int(len(tickets))
     ticket_medio = total_ingresos / n_tickets if n_tickets else 0.0
-
     prod_qty = df.groupby("producto")["cantidad"].sum().sort_values(ascending=False) if "producto" in df.columns else None
     producto_top = prod_qty.index[0] if (prod_qty is not None and len(prod_qty)) else "N/A"
     cantidad_top = int(prod_qty.iloc[0]) if (prod_qty is not None and len(prod_qty)) else 0
-
     dia_qty = df.groupby("dow")["cantidad"].sum().reindex(DOW_ORDER).fillna(0) if "dow" in df.columns else None
     dia_mas_ventas = dia_qty.idxmax() if (dia_qty is not None and len(dia_qty)) else "—"
     dia_menos_ventas = dia_qty.idxmin() if (dia_qty is not None and len(dia_qty)) else "—"
-
     alertas = []
     if "precio_unitario" in df.columns:
         df["margen_unit"] = (df["precio_unitario"] - df.get("coste_unitario", 0)).fillna(0)
-        for p in sorted(df["producto"].astype(str).unique()):
+        for p in productos:
             dp = df[df["producto"] == p]
-            if len(dp) == 0: continue
+            if len(dp)==0: continue
             rent = float(dp["margen_unit"].mean())
             if rent < 0.10:
                 alertas.append(f"Rentabilidad baja en {p}: {rent:.2f} €/unidad")
 
-    # ---------- Generación del PDF ----------
+    # ---------- PDF (fpdf2 + fuentes Unicode) ----------
+    FONT_REGULAR = "fonts/DejaVuSans.ttf"
+    FONT_BOLD    = "fonts/DejaVuSans-Bold.ttf"
+
     class Reporte(FPDF):
         def header(self):
             if os.path.exists("logo.png"):
                 self.image("logo.png", x=10, y=8, w=20)
-            self.set_font("Helvetica", "B", 14)
+            self.set_font("DejaVu", "B", 14)
             self.cell(0, 10, "Informe de Ventas - Cafetería", border=0, ln=1, align="C")
             self.ln(2)
         def footer(self):
             self.set_y(-15)
-            self.set_font("Helvetica", "I", 8)
+            self.set_font("DejaVu", "", 8)
             self.cell(0, 10, f"Página {self.page_no()}", 0, 0, "C")
 
     def crear_pdf_bytes(MAX_PRICING_PLOTS=6):
-        # 1) Guardar todas las figuras de la web a PNG
+        # Exportar figuras a PNG
         fig_paths = []
-
         for maker, name in [
             (fig_prediccion, "prediccion"),
             (fig_horas, "ventas_hora"),
@@ -853,73 +836,68 @@ with tab5:
             (fig_ticket_medio, "ticket_medio"),
             (fig_semana_vs_anterior, "semana_vs_anterior"),
         ]:
-            f = maker()
-            if f is not None:
-                p = save_plotly_png(f, name)
-                if p: fig_paths.append((name, p))
+            p = save_plotly_png(maker(), name)
+            if p: fig_paths.append((name, p))
 
-        # Simulador IA (varios productos)
         curvas_paths = []
-        for p in sorted(df["producto"].astype(str).unique())[:MAX_PRICING_PLOTS]:
-            f = fig_pricing_producto(df[df["producto"] == p], p)
-            if f is not None:
-                path = save_plotly_png(f, f"pricing_{p.replace(' ','_')[:30]}")
-                if path: curvas_paths.append((p, path))
+        for p_name in productos[:MAX_PRICING_PLOTS]:
+            f = fig_pricing_producto(df[df["producto"] == p_name], p_name)
+            pth = save_plotly_png(f, f"pricing_{p_name.replace(' ','_')[:30]}")
+            if pth: curvas_paths.append((p_name, pth))
 
-        # Grafo de combos
-        fg = fig_grafo_combos()
-        grafo_path = save_plotly_png(fg, "grafo_combos") if fg is not None else None
+        grafo_path = save_plotly_png(fig_grafo_combos(), "grafo_combos")
 
-        # 2) Componer PDF
         pdf = Reporte()
         pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_font("DejaVu", "", FONT_REGULAR, uni=True)
+        pdf.add_font("DejaVu", "B", FONT_BOLD, uni=True)
 
         # Portada
         pdf.add_page()
-        pdf.set_font("Helvetica", "B", 20); pdf.cell(0, 12, "Informe mensual de ventas", ln=1, align="C")
-        pdf.set_font("Helvetica", "", 12); pdf.cell(0, 8, datetime.now().strftime("Generado el %d/%m/%Y"), ln=1, align="C")
+        pdf.set_font("DejaVu", "B", 20); pdf.cell(0, 12, "Informe mensual de ventas", ln=1, align="C")
+        pdf.set_font("DejaVu", "", 12); pdf.cell(0, 8, datetime.now().strftime("Generado el %d/%m/%Y"), ln=1, align="C")
         pdf.ln(4)
 
-        # Resumen ejecutivo (KPIs)
-        pdf.set_font("Helvetica", "B", 14); pdf.cell(0, 10, "Resumen ejecutivo", ln=1)
-        def row(k, v): 
-            pdf.set_font("Helvetica","B",12); pdf.cell(70,8,k,1,0)
-            pdf.set_font("Helvetica","",12);  pdf.cell(0,8,v,1,1)
-        row("Ingresos totales", eur(total_ingresos))
-        row("Beneficio total", eur(beneficio_total))
-        row("Ticket medio", eur(ticket_medio))
+        # KPIs
+        pdf.set_font("DejaVu", "B", 14); pdf.cell(0, 10, "Resumen ejecutivo", ln=1)
+        def row(k, v):
+            pdf.set_font("DejaVu","B",12); pdf.cell(70,8,k,1,0)
+            pdf.set_font("DejaVu","",12);  pdf.cell(0,8,v,1,1)
+        def eur2(x): return f"{x:,.2f} €".replace(",", "X").replace(".", ",").replace("X",".")
+        row("Ingresos totales", eur2(total_ingresos))
+        row("Beneficio total", eur2(beneficio_total))
+        row("Ticket medio",   eur2(ticket_medio))
         row("Producto más vendido", f"{producto_top} ({cantidad_top} uds)")
         row("Día más fuerte", str(dia_mas_ventas))
-        row("Día más flojo", str(dia_menos_ventas))
+        row("Día más flojo",  str(dia_menos_ventas))
         pdf.ln(4)
 
         # Alertas
-        pdf.set_font("Helvetica", "B", 14); pdf.cell(0,10,"Alertas", ln=1)
-        pdf.set_font("Helvetica", "", 11)
+        pdf.set_font("DejaVu", "B", 14); pdf.cell(0,10,"Alertas", ln=1)
+        pdf.set_font("DejaVu", "", 11)
         if alertas:
             for a in alertas: pdf.multi_cell(0, 7, f"• {a}")
         else:
             pdf.multi_cell(0, 7, "No se detectaron alertas.")
         pdf.ln(2)
 
-        # Gráficos clave (todos los del Tab 2)
-        pdf.set_font("Helvetica", "B", 14); pdf.cell(0,10,"Gráficos", ln=1)
-        for _, path in fig_paths:
-            pdf.ln(2); pdf.image(path, w=180)
+        # Gráficos del Tab 2
+        if fig_paths:
+            pdf.set_font("DejaVu", "B", 14); pdf.cell(0,10,"Gráficos", ln=1)
+            for _, p in fig_paths:
+                pdf.ln(2); pdf.image(p, w=180)
 
-        # Simulador IA – curvas por producto
+        # Simulador IA
         if curvas_paths:
             pdf.add_page()
-            pdf.set_font("Helvetica", "B", 14); pdf.cell(0,10,"Simulador IA: Curvas de precio por producto", ln=1)
-            for nombre, path in curvas_paths:
-                pdf.set_font("Helvetica","B",12); pdf.cell(0,8, nombre, ln=1)
-                pdf.image(path, w=180); pdf.ln(2)
+            pdf.set_font("DejaVu", "B", 14); pdf.cell(0,10,"Simulador IA: Curvas de precio por producto", ln=1)
+            for nombre, p in curvas_paths:
+                pdf.set_font("DejaVu","B",12); pdf.cell(0,8, nombre, ln=1)
+                pdf.image(p, w=180); pdf.ln(2)
 
-        # Recomendaciones y grafo de combos
+        # Recomendaciones + grafo combos
         pdf.add_page()
-        pdf.set_font("Helvetica", "B", 14); pdf.cell(0,10,"Recomendaciones (Combos)", ln=1)
-
-        # Top combos (texto)
+        pdf.set_font("DejaVu", "B", 14); pdf.cell(0,10,"Recomendaciones (Combos)", ln=1)
         combinaciones = df.groupby("ticket_id")["producto"].apply(list)
         pares = []
         for lista in combinaciones:
@@ -927,29 +905,26 @@ with tab5:
             for i in range(len(lista)):
                 for j in range(i+1, len(lista)):
                     pares.append(tuple(sorted((lista[i], lista[j]))))
-        from collections import Counter
         top_combos = Counter(pares).most_common(5)
-        pdf.set_font("Helvetica", "", 11)
+        pdf.set_font("DejaVu", "", 11)
         if top_combos:
             for (p1, p2), count in top_combos:
                 v1 = df[df["producto"] == p1]["precio_unitario"].mean()
                 v2 = df[df["producto"] == p2]["precio_unitario"].mean()
-                if pd.isna(v1) or pd.isna(v2): 
+                if pd.isna(v1) or pd.isna(v2):
                     precio = "—"
                 else:
-                    precio = eur(round((v1+v2)*0.90, 2))
+                    precio = eur2(round((v1+v2)*0.90, 2))
                 pdf.multi_cell(0, 7, f"• {p1} + {p2} → {count} veces · Sugerencia combo: {precio}")
         else:
             pdf.multi_cell(0, 7, "No hay suficientes tickets con ≥2 productos para sugerir combos.")
-
-        # Grafo
         if grafo_path:
             pdf.ln(4); pdf.image(grafo_path, w=180)
 
         return pdf.output(dest="S").encode("latin-1","ignore")
 
-    # ------ Botón ------
-    max_plots = st.slider("Cuántos productos incluir con curva de precio (Simulador IA)", 3, 12, 6)
+    # Controles y botón
+    max_plots = st.slider("Productos a incluir con curva de precio (Simulador IA)", 3, 12, 6)
     if st.button("📥 Generar PDF completo"):
         data = crear_pdf_bytes(MAX_PRICING_PLOTS=max_plots)
         st.download_button("Descargar informe", data, file_name="informe_cafeteria.pdf", mime="application/pdf")
